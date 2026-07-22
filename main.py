@@ -77,29 +77,32 @@ def check_crosses():
             df[ema_fast_col] = calculate_ema(df, fast)
             df[ema_slow_col] = calculate_ema(df, slow)
 
-            prev_fast = df[ema_fast_col].iloc[-3]
-            prev_slow = df[ema_slow_col].iloc[-3]
-            curr_fast = df[ema_fast_col].iloc[-2]
-            curr_slow = df[ema_slow_col].iloc[-2]
+            # EVALUACIÓN EN TIEMPO REAL:
+            # -2 es la vela anterior cerrada
+            # -1 es la vela actual en movimiento
+            prev_fast = df[ema_fast_col].iloc[-2]
+            prev_slow = df[ema_slow_col].iloc[-2]
+            curr_fast = df[ema_fast_col].iloc[-1]
+            curr_slow = df[ema_slow_col].iloc[-1]
 
             signal_key = f"{tf}_{fast}_{slow}"
 
             if prev_fast <= prev_slow and curr_fast > curr_slow:
                 if last_signals.get(signal_key) != 'BULLISH':
                     title = f"CRUCE ALCISTA BTC/USDT ({tf})"
-                    msg = f"EMA {fast} cruzó por ENCIMA de EMA {slow} en {tf}.\nPrecio: ${df['close'].iloc[-1]:,.2f}"
+                    msg = f"EMA {fast} cruzó por ENCIMA de EMA {slow} en {tf}.\nPrecio actual: ${df['close'].iloc[-1]:,.2f}"
                     send_ntfy_alert(title, msg, tags="rocket,chart_with_upwards_trend")
                     last_signals[signal_key] = 'BULLISH'
 
             elif prev_fast >= prev_slow and curr_fast < curr_slow:
                 if last_signals.get(signal_key) != 'BEARISH':
                     title = f"CRUCE BAJISTA BTC/USDT ({tf})"
-                    msg = f"EMA {fast} cruzó por DEBAJO de EMA {slow} en {tf}.\nPrecio: ${df['close'].iloc[-1]:,.2f}"
+                    msg = f"EMA {fast} cruzó por DEBAJO de EMA {slow} en {tf}.\nPrecio actual: ${df['close'].iloc[-1]:,.2f}"
                     send_ntfy_alert(title, msg, tags="warning,chart_with_downwards_trend")
                     last_signals[signal_key] = 'BEARISH'
 
 if __name__ == "__main__":
-    send_ntfy_alert("Bot Conectado en Render", "El bot de alertas EMA para BTC/USDT ya está corriendo activo en la nube.", tags="white_check_mark")
+    send_ntfy_alert("Bot Actualizado: Modo Tiempo Real", "Alertas ajustadas para notificar al instante exacto del cruce.", tags="zap")
     while True:
         try:
             check_crosses()
