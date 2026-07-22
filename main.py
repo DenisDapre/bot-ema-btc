@@ -86,4 +86,21 @@ if __name__ == "__main__":
             check_crosses()
         except Exception as e:
             print(f"Error en el bucle principal: {e}")
-        time.sleep(60)
+        time.sleep(60)import threading
+from http.server import HTTPServer, BaseHTTPRequestHandler
+import os
+
+# Servidor web dummy para que Render detecte un puerto abierto
+class DummyHandler(BaseHTTPRequestHandler):
+    def do_GET(self):
+        self.send_response(200)
+        self.end_headers()
+        self.wfile.write(b"Bot activo")
+
+def run_dummy_server():
+    port = int(os.environ.get("PORT", 10000))
+    server = HTTPServer(("0.0.0.0", port), DummyHandler)
+    server.serve_forever()
+
+# Iniciar servidor web en segundo plano
+threading.Thread(target=run_dummy_server, daemon=True).start()
