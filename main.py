@@ -70,7 +70,7 @@ def send_ntfy_alert(title, message, tags="chart_with_upwards_trend"):
 def check_crosses():
     global last_signals
     now = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-    print(f"[{now}] Chequeando EMAs en Binance...")
+    print(f"[{now}] Chequeando EMAs en Binance...", flush=True)
 
     for tf in TIMEFRAMES:
         df = get_binance_klines(SYMBOL, tf)
