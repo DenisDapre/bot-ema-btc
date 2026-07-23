@@ -1,3 +1,4 @@
+Agrega modos Scalp y Swing
 import time
 import requests
 import pandas as pd
@@ -27,7 +28,6 @@ def send_ntfy_alert(topic, prefix, message):
     Envía la notificación push vía ntfy.sh usando UTF-8 en el body para soportar emojis.
     """
     url = f"{NTFY_URL_BASE}{topic}"
-    # Formateamos el mensaje final asegurando que el body vaya en UTF-8
     full_message = f"{prefix}\n\n{message}"
     
     try:
@@ -35,7 +35,7 @@ def send_ntfy_alert(topic, prefix, message):
             url,
             data=full_message.encode('utf-8'),
             headers={
-                "Title": "Alerta Bot EMA BTC" # Header limpio en ASCII
+                "Title": "Alerta Bot EMA BTC"
             }
         )
         print(f"[{prefix}] Notificación enviada. Status: {response.status_code}")
@@ -50,7 +50,6 @@ def get_klines_df(interval, limit=100):
     url = f"https://api.binance.com/api/v3/klines?symbol={SYMBOL}&interval={interval}&limit={limit+1}"
     try:
         res = requests.get(url).json()
-        # Descartamos la última vela (res[:-1]) porque aún no ha cerrado
         df = pd.DataFrame(res[:-1], columns=[
             'timestamp', 'open', 'high', 'low', 'close', 'volume', 
             'close_time', 'qav', 'num_trades', 'taker_base_vol', 'taker_quote_vol', 'ignore'
@@ -73,25 +72,15 @@ def calculate_ema(df, periods):
 # LÓGICA DE TRADING (SCALP & SWING)
 # ==========================================
 def check_scalp(df_1m, df_15m):
-    """
-    Modo SCALP:
-    - Timeframe: 1m
-    - EMAs: 9 y 21
-    - Confluencia: Tendencia de 15m (EMA 9 > EMA 21)
-    - Stop Loss: 8 velas atrás
-    - R:B: 1.2
-    """
     global last_alert_scalp
     
     df_1m = calculate_ema(df_1m, [9, 21])
     df_15m = calculate_ema(df_15m, [9, 21])
     
-    # Condición de confluencia en 15m
     last_15m = df_15m.iloc[-1]
     trend_15m_bullish = last_15m['EMA_9'] > last_15m['EMA_21']
     trend_15m_bearish = last_15m['EMA_9'] < last_15m['EMA_21']
 
-    # Condición de cruce en 1m
     last_1m = df_1m.iloc[-1]
     prev_1m = df_1m.iloc[-2]
     
@@ -102,7 +91,6 @@ def check_scalp(df_1m, df_15m):
     timestamp = df_1m.iloc[-1]['timestamp']
 
     if cross_up and trend_15m_bullish and timestamp != last_alert_scalp:
-        # Calcular Stop Loss (mínimo de 8 velas)
         sl = df_1m['low'].tail(8).min()
         risk = current_price - sl
         tp = current_price + (risk * 1.2)
@@ -129,25 +117,15 @@ def check_scalp(df_1m, df_15m):
         last_alert_scalp = timestamp
 
 def check_swing(df_5m, df_1h):
-    """
-    Modo SWING:
-    - Timeframe: 5m
-    - EMAs: 9, 21, 50, 200 (Evaluamos 9/21 para entrada inicial)
-    - Confluencia: Tendencia de 1h (EMA 9 > EMA 21)
-    - Stop Loss: 20 velas atrás
-    - R:B: 2.0
-    """
     global last_alert_swing
     
     df_5m = calculate_ema(df_5m, [9, 21, 50, 200])
     df_1h = calculate_ema(df_1h, [9, 21])
     
-    # Confluencia en 1h
     last_1h = df_1h.iloc[-1]
     trend_1h_bullish = last_1h['EMA_9'] > last_1h['EMA_21']
     trend_1h_bearish = last_1h['EMA_9'] < last_1h['EMA_21']
 
-    # Cruce en 5m
     last_5m = df_5m.iloc[-1]
     prev_5m = df_5m.iloc[-2]
     
@@ -183,7 +161,6 @@ def check_swing(df_5m, df_1h):
         send_ntfy_alert(TOPIC_SWING, "⚠️ [SWING]", msg)
         last_alert_swing = timestamp
 
-
 # ==========================================
 # LOOP PRINCIPAL DEL BOT
 # ==========================================
@@ -193,13 +170,11 @@ def bot_loop():
         try:
             print(f"--- [{time.strftime('%Y-%m-%d %H:%M:%S')}] Chequeo de mercado ---")
             
-            # 1. Descarga centralizada de datos (Ahorra llamadas a la API)
             df_1m = get_klines_df("1m")
             df_5m = get_klines_df("5m")
             df_15m = get_klines_df("15m")
             df_1h = get_klines_df("1h")
             
-            # 2. Si las llamadas fueron exitosas, corremos las lógicas
             if all(v is not None for v in [df_1m, df_5m, df_15m, df_1h]):
                 check_scalp(df_1m, df_15m)
                 check_swing(df_5m, df_1h)
@@ -208,11 +183,10 @@ def bot_loop():
             print(f"Error crítico en el loop: {e}")
             traceback.print_exc()
             
-        # Esperar 30 segundos antes de volver a consultar
         time.sleep(30)
 
 # ==========================================
-# SERVIDOR FLASK (Para Render & Cron-job)
+# SERVIDOR FLASK
 # ==========================================
 @app.route('/')
 def home():
@@ -228,9 +202,6 @@ def start_flask():
     app.run(host='0.0.0.0', port=10000)
 
 if __name__ == '__main__':
-    # Iniciamos el servidor web en un hilo secundario
     server = Thread(target=start_flask)
     server.start()
-    
-    # Iniciamos el loop del bot en el hilo principal
     bot_loop()
