@@ -1,4 +1,3 @@
-Agrega modos Scalp y Swing
 import time
 import requests
 import pandas as pd
