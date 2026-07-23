@@ -6,16 +6,15 @@ import pandas as pd
 import time
 from datetime import datetime
 
-# --- SERVIDOR WEB DUMMY PARA KEEP-ALIVE ---
+# --- SERVIDOR WEB DUMMY ---
 class DummyHandler(BaseHTTPRequestHandler):
     def do_GET(self):
         self.send_response(200)
         self.send_header('Content-type', 'text/html')
         self.end_headers()
-        self.wfile.write(b"Bot EMA Activo y Funcionando")
+        self.wfile.write(b"Bot EMA Activo")
 
     def log_message(self, format, *args):
-        # Desactivar logs molestos de solicitudes GET para no ensuciar la consola
         return
 
 def run_dummy_server():
@@ -23,33 +22,30 @@ def run_dummy_server():
     server = HTTPServer(("0.0.0.0", port), DummyHandler)
     server.serve_forever()
 
-# --- CONFIGURACIÓN DEL BOT ---
+# --- CONFIGURACIÓN ---
 SYMBOL = 'BTCUSDT'
 TIMEFRAMES = ['5m', '15m', '1h']
 EMA_PAIRS = [(9, 21), (21, 50), (50, 200)]
 NTFY_TOPIC = 'BITCOIN-btc-EMA'
 NTFY_URL = f'https://ntfy.sh/{NTFY_TOPIC}'
 
-# Memoria para el estado de cada par en cada temporalidad
-last_signals = {}
+# Guarda el último estado conocido: 'BULLISH' o 'BEARISH'
+ema_states = {}
 
-def get_binance_klines(symbol, interval, limit=250):
+def get_binance_klines(symbol, interval, limit=100):
     url = f'https://api.binance.com/api/v3/klines?symbol={symbol}&interval={interval}&limit={limit}'
     try:
         res = requests.get(url, timeout=10)
         if res.status_code == 200:
-            data = res.json()
-            df = pd.DataFrame(data, columns=[
+            df = pd.DataFrame(res.json(), columns=[
                 'timestamp', 'open', 'high', 'low', 'close', 'volume',
                 'close_time', 'qav', 'num_trades', 'taker_base_vol', 'taker_quote_vol', 'ignore'
             ])
             df['close'] = df['close'].astype(float)
             return df
-        else:
-            print(f"Binance API Status Code: {res.status_code}")
-            return None
+        return None
     except Exception as e:
-        print(f"Error obteniendo datos ({interval}): {e}")
+        print(f"Error Binance ({interval}): {e}", flush=True)
         return None
 
 def calculate_ema(df, period):
@@ -63,65 +59,56 @@ def send_ntfy_alert(title, message, tags="chart_with_upwards_trend"):
     }
     try:
         requests.post(NTFY_URL, data=message.encode('utf-8'), headers=headers, timeout=10)
-        print(f"🔔 NOTIFICACIÓN ENVIADA: {title}")
+        print(f"🔔 ALERTA ENVIADA: {title}", flush=True)
     except Exception as e:
-        print(f"Error al enviar a ntfy: {e}")
+        print(f"Error ntfy: {e}", flush=True)
 
 def check_crosses():
-    global last_signals
+    global ema_states
     now = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-    print(f"[{now}] Chequeando EMAs en Binance...", flush=True)
+    print(f"[{now}] Analizando estado de EMAs...", flush=True)
 
     for tf in TIMEFRAMES:
         df = get_binance_klines(SYMBOL, tf)
-        if df is None or len(df) < 200:
+        if df is None or len(df) < 50:
             continue
 
         for fast, slow in EMA_PAIRS:
-            ema_fast_col = f'EMA_{fast}'
-            ema_slow_col = f'EMA_{slow}'
+            ema_fast = calculate_ema(df, fast).iloc[-1] # Valor actual
+            ema_slow = calculate_ema(df, slow).iloc[-1] # Valor actual
+            price = df['close'].iloc[-1]
 
-            df[ema_fast_col] = calculate_ema(df, fast)
-            df[ema_slow_col] = calculate_ema(df, slow)
+            pair_key = f"{tf}_{fast}_{slow}"
+            current_state = 'BULLISH' if ema_fast > ema_slow else 'BEARISH'
 
-            # Usamos velas cerradas confirmadas para evitar falsos cruces por volatilidad
-            # -3 = Penúltima vela cerrada
-            # -2 = Última vela recién cerrada
-            prev_fast = df[ema_fast_col].iloc[-3]
-            prev_slow = df[ema_slow_col].iloc[-3]
-            curr_fast = df[ema_fast_col].iloc[-2]
-            curr_slow = df[ema_slow_col].iloc[-2]
+            # Si es la primera vez que corre, solo guardamos el estado sin alertar
+            if pair_key not in ema_states:
+                ema_states[pair_key] = current_state
+                continue
 
-            signal_key = f"{tf}_{fast}_{slow}"
-
-            # Cruce Alcista
-            if prev_fast <= prev_slow and curr_fast > curr_slow:
-                if last_signals.get(signal_key) != 'BULLISH':
+            # ¡SI EL ESTADO CAMBIÓ, DISPARA LA ALERTA!
+            if current_state != ema_states[pair_key]:
+                if current_state == 'BULLISH':
                     title = f"🚀 CRUCE ALCISTA BTC ({tf})"
-                    msg = f"EMA {fast} cruzó por ENCIMA de EMA {slow} en {tf}.\nPrecio cierre: ${df['close'].iloc[-2]:,.2f}"
+                    msg = f"EMA {fast} cruzó por ENCIMA de EMA {slow}.\nPrecio: ${price:,.2f}"
                     send_ntfy_alert(title, msg, tags="rocket,chart_with_upwards_trend")
-                    last_signals[signal_key] = 'BULLISH'
-
-            # Cruce Bajista
-            elif prev_fast >= prev_slow and curr_fast < curr_slow:
-                if last_signals.get(signal_key) != 'BEARISH':
+                else:
                     title = f"⚠️ CRUCE BAJISTA BTC ({tf})"
-                    msg = f"EMA {fast} cruzó por DEBAJO de EMA {slow} en {tf}.\nPrecio cierre: ${df['close'].iloc[-2]:,.2f}"
+                    msg = f"EMA {fast} cruzó por DEBAJO de EMA {slow}.\nPrecio: ${price:,.2f}"
                     send_ntfy_alert(title, msg, tags="warning,chart_with_downwards_trend")
-                    last_signals[signal_key] = 'BEARISH'
+
+                # Actualizar el nuevo estado
+                ema_states[pair_key] = current_state
 
 def bot_loop():
-    send_ntfy_alert("Bot Reiniciado y Activo", "El bot de EMAs está monitoreando en segundo plano.", tags="robot")
+    send_ntfy_alert("Bot Reiniciado (Lógica V2)", "Monitoreando cambios de estado continuo en EMAs.", tags="gear")
     while True:
         try:
             check_crosses()
         except Exception as e:
-            print(f"Error en el bucle principal: {e}")
-        time.sleep(30) # Chequeo cada 30 segundos
+            print(f"Error loop: {e}", flush=True)
+        time.sleep(30)
 
 if __name__ == "__main__":
-    # Iniciar el servidor web en un hilo
     threading.Thread(target=run_dummy_server, daemon=True).start()
-    
-    # Iniciar el bot en el proceso principal
     bot_loop()
