@@ -5,10 +5,27 @@ import requests
 import pandas as pd
 import time
 from datetime import datetime
+from urllib.parse import urlparse, parse_qs
 
 # --- SERVIDOR WEB DUMMY ---
 class DummyHandler(BaseHTTPRequestHandler):
     def do_GET(self):
+        parsed = urlparse(self.path)
+
+        if parsed.path == "/test-alert":
+            # Permite forzar un envío de prueba a ntfy desde el navegador
+            # Ej: https://bot-ema-btc.onrender.com/test-alert
+            send_ntfy_alert(
+                "TEST BTC",
+                "🚀 Notificación de prueba manual.\nSi ves esto en el celu, ntfy funciona OK.",
+                tags="rocket"
+            )
+            self.send_response(200)
+            self.send_header('Content-type', 'text/plain')
+            self.end_headers()
+            self.wfile.write(b"Test alert enviada. Revisa Logs y el celular.")
+            return
+
         self.send_response(200)
         self.send_header('Content-type', 'text/html')
         self.end_headers()
@@ -28,7 +45,6 @@ TIMEFRAMES = ['5m', '15m', '1h']
 EMA_PAIRS = [(9, 21), (21, 50), (50, 200)]
 NTFY_TOPIC = 'BITCOIN-btc-EMA'
 NTFY_URL = f'https://ntfy.sh/{NTFY_TOPIC}'
-
 ema_states = {}
 
 def get_binance_klines(symbol, interval, limit=300):
@@ -51,14 +67,21 @@ def calculate_ema(df, period):
     return df['close'].ewm(span=period, adjust=False).mean()
 
 def send_ntfy_alert(title, message, tags="chart_with_upwards_trend"):
+    # IMPORTANTE: el header "Title" viaja en latin-1/ascii.
+    # Si metemos un emoji ahí, requests puede tirar UnicodeEncodeError
+    # y la alerta nunca sale (el error queda solo en los logs).
+    # Por eso el título va limpio (sin emoji) y el emoji va en el body,
+    # que sí soporta UTF-8 sin problema.
+    safe_title = title.strip().encode('ascii', 'ignore').decode('ascii')
+
     headers = {
-        "Title": title.strip(),
+        "Title": safe_title,
         "Tags": tags,
         "Priority": "high"
     }
     try:
-        requests.post(NTFY_URL, data=message.encode('utf-8'), headers=headers, timeout=10)
-        print(f"🔔 ALERTA ENVIADA: {title}", flush=True)
+        r = requests.post(NTFY_URL, data=message.encode('utf-8'), headers=headers, timeout=10)
+        print(f"🔔 ALERTA ENVIADA: {safe_title} | status={r.status_code} | resp={r.text}", flush=True)
     except Exception as e:
         print(f"Error ntfy: {e}", flush=True)
 
@@ -66,17 +89,14 @@ def check_crosses():
     global ema_states
     now = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
     print(f"--- [{now}] Chequeo de EMAs ---", flush=True)
-
     for tf in TIMEFRAMES:
         df = get_binance_klines(SYMBOL, tf)
         if df is None or len(df) < 200:
             continue
-
         for fast, slow in EMA_PAIRS:
             ema_fast = calculate_ema(df, fast).iloc[-1]
             ema_slow = calculate_ema(df, slow).iloc[-1]
             price = df['close'].iloc[-1]
-
             pair_key = f"{tf}_{fast}_{slow}"
             current_state = 'BULLISH' if ema_fast > ema_slow else 'BEARISH'
 
@@ -89,18 +109,17 @@ def check_crosses():
 
             if current_state != ema_states[pair_key]:
                 if current_state == 'BULLISH':
-                    title = f"🚀 CRUCE ALCISTA BTC ({tf})"
-                    msg = f"EMA {fast} cruzó por ENCIMA de EMA {slow}.\nPrecio: ${price:,.2f}"
+                    title = f"CRUCE ALCISTA BTC ({tf})"
+                    msg = f"🚀 EMA {fast} cruzó por ENCIMA de EMA {slow}.\nPrecio: ${price:,.2f}"
                     send_ntfy_alert(title, msg, tags="rocket,chart_with_upwards_trend")
                 else:
-                    title = f"⚠️ CRUCE BAJISTA BTC ({tf})"
-                    msg = f"EMA {fast} cruzó por DEBAJO de EMA {slow}.\nPrecio: ${price:,.2f}"
+                    title = f"CRUCE BAJISTA BTC ({tf})"
+                    msg = f"⚠️ EMA {fast} cruzó por DEBAJO de EMA {slow}.\nPrecio: ${price:,.2f}"
                     send_ntfy_alert(title, msg, tags="warning,chart_with_downwards_trend")
-
                 ema_states[pair_key] = current_state
 
 def bot_loop():
-    send_ntfy_alert("Bot Diagnóstico V2.1", "Log de valores activo.", tags="gear")
+    send_ntfy_alert("Bot Diagnostico V2.2", "Log de valores activo.", tags="gear")
     while True:
         try:
             check_crosses()
