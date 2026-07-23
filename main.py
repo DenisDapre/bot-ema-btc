@@ -29,10 +29,9 @@ EMA_PAIRS = [(9, 21), (21, 50), (50, 200)]
 NTFY_TOPIC = 'BITCOIN-btc-EMA'
 NTFY_URL = f'https://ntfy.sh/{NTFY_TOPIC}'
 
-# Guarda el último estado conocido: 'BULLISH' o 'BEARISH'
 ema_states = {}
 
-def get_binance_klines(symbol, interval, limit=100):
+def get_binance_klines(symbol, interval, limit=300):
     url = f'https://api.binance.com/api/v3/klines?symbol={symbol}&interval={interval}&limit={limit}'
     try:
         res = requests.get(url, timeout=10)
@@ -66,27 +65,28 @@ def send_ntfy_alert(title, message, tags="chart_with_upwards_trend"):
 def check_crosses():
     global ema_states
     now = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-    print(f"[{now}] Analizando estado de EMAs...", flush=True)
+    print(f"--- [{now}] Chequeo de EMAs ---", flush=True)
 
     for tf in TIMEFRAMES:
         df = get_binance_klines(SYMBOL, tf)
-        if df is None or len(df) < 50:
+        if df is None or len(df) < 200:
             continue
 
         for fast, slow in EMA_PAIRS:
-            ema_fast = calculate_ema(df, fast).iloc[-1] # Valor actual
-            ema_slow = calculate_ema(df, slow).iloc[-1] # Valor actual
+            ema_fast = calculate_ema(df, fast).iloc[-1]
+            ema_slow = calculate_ema(df, slow).iloc[-1]
             price = df['close'].iloc[-1]
 
             pair_key = f"{tf}_{fast}_{slow}"
             current_state = 'BULLISH' if ema_fast > ema_slow else 'BEARISH'
 
-            # Si es la primera vez que corre, solo guardamos el estado sin alertar
+            # Muestra exactamente lo que está calculando para cada par
+            print(f"[{tf}] EMA {fast}: {ema_fast:.2f} | EMA {slow}: {ema_slow:.2f} -> {current_state}", flush=True)
+
             if pair_key not in ema_states:
                 ema_states[pair_key] = current_state
                 continue
 
-            # ¡SI EL ESTADO CAMBIÓ, DISPARA LA ALERTA!
             if current_state != ema_states[pair_key]:
                 if current_state == 'BULLISH':
                     title = f"🚀 CRUCE ALCISTA BTC ({tf})"
@@ -97,11 +97,10 @@ def check_crosses():
                     msg = f"EMA {fast} cruzó por DEBAJO de EMA {slow}.\nPrecio: ${price:,.2f}"
                     send_ntfy_alert(title, msg, tags="warning,chart_with_downwards_trend")
 
-                # Actualizar el nuevo estado
                 ema_states[pair_key] = current_state
 
 def bot_loop():
-    send_ntfy_alert("Bot Reiniciado (Lógica V2)", "Monitoreando cambios de estado continuo en EMAs.", tags="gear")
+    send_ntfy_alert("Bot Diagnóstico V2.1", "Log de valores activo.", tags="gear")
     while True:
         try:
             check_crosses()
